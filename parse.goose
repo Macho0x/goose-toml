@@ -10,7 +10,7 @@ import std;
 
 namespace parse;
 
-enum TableKind { Implicit, Defined, Inline }
+enum TableKind { Implicit, Dotted, Defined, Inline }
 
 enum Items { Values, Tables }
 
@@ -185,9 +185,8 @@ fn eat_newline(text: u8[:], pos: i64&) -> bool {
         pos++;
         return true;
     }
-    if text[pos] == '\r' {
-        pos++;
-        if pos < text.len && text[pos] == '\n' { pos++; }
+    if text[pos] == '\r' && pos + 1 < text.len && text[pos + 1] == '\n' {
+        pos += 2;
         return true;
     }
     return false;
@@ -203,11 +202,16 @@ fn skip_ws(text: u8[:], pos: i64&, span: bool) {
             continue;
         }
         if span && (c == '\n' || c == '\r') {
-            eat_newline(text, pos);
+            if !eat_newline(text, pos) { bail(pos, "control character"); }
             continue;
         }
         if c == '#' {
-            while pos < text.len && text[pos] != '\n' && text[pos] != '\r' { pos++; }
+            pos++;
+            while pos < text.len && text[pos] != '\n' && text[pos] != '\r' {
+                let d = text[pos];
+                if d == 0x7F || (d < 0x20 && d != '\t') { bail(pos, "control character"); }
+                pos++;
+            }
             continue;
         }
         return;
@@ -418,7 +422,10 @@ fn read_key(text: u8[:], pos: i64&, decoded: u8[>..]&) -> const u8[:] {
     skip_ws(text, pos, false);
     if pos >= text.len { bail(pos, "expected a key"); }
     let c = text[pos];
-    if c == '"' || c == '\'' { return read_string(text, pos, decoded); }
+    if c == '"' || c == '\'' {
+        if pos + 2 < text.len && text[pos + 1] == c && text[pos + 2] == c { bail(pos, "multiline key"); }
+        return read_string(text, pos, decoded);
+    }
     if bare(c) {
         let start = pos;
         while pos < text.len && bare(text[pos]) { pos++; }
@@ -480,14 +487,21 @@ fn read_value(text: u8[:], pos: i64&, decoded: u8[>..]&) -> Value {
         need('-', "bad date");
         let day = read_n(2, "bad date");
         if month < 1 || month > 12 || day < 1 || day > month_days(year, month) { bail(pos, "bad date"); }
-        if pos >= text.len || (text[pos] != 'T' && text[pos] != ' ') {
+        var timed = false;
+        if pos < text.len && (text[pos] == 'T' || text[pos] == 't') {
+            timed = true;
+            pos++;
+        } else if pos + 1 < text.len && text[pos] == ' ' && digit(text[pos + 1]) {
+            timed = true;
+            pos++;
+        }
+        if !timed {
             bound();
             return Value.Time { when: When.LocalDate, s: text[begin..pos] };
         }
-        pos++;
         read_hms();
-        if pos < text.len && (text[pos] == 'Z' || text[pos] == '+' || text[pos] == '-') {
-            if text[pos] == 'Z' {
+        if pos < text.len && (text[pos] == 'Z' || text[pos] == 'z' || text[pos] == '+' || text[pos] == '-') {
+            if text[pos] == 'Z' || text[pos] == 'z' {
                 pos++;
             } else {
                 pos++;
@@ -568,6 +582,27 @@ fn read_value(text: u8[:], pos: i64&, decoded: u8[>..]&) -> Value {
         return Value.Int { v: n };
     }
 
+    fn whole_float(s: u8[:]) -> bool {
+        var i = 0;
+        if s.len > 0 && (s[0] == '+' || s[0] == '-') { i = 1; }
+        var saw_dot = false;
+        var any = false;
+        while i < s.len {
+            let c = s[i];
+            if c == '.' {
+                if saw_dot { return false; }
+                saw_dot = true;
+            } else if c >= '0' && c <= '9' {
+                if saw_dot && c != '0' { return false; }
+                any = true;
+            } else {
+                return false;
+            }
+            i++;
+        }
+        return saw_dot && any;
+    }
+
     fn take_decimal(begin: i64) -> Value {
         if pos >= text.len || !digit(text[pos]) { bail(pos, "bad number"); }
         if text[pos] == '0' {
@@ -591,6 +626,13 @@ fn read_value(text: u8[:], pos: i64&, decoded: u8[>..]&) -> Value {
         bound();
         let s = strip(begin, pos);
         if is_float {
+            // parse_flt is off by one unit on a long ".0" mantissa. The integer is exact.
+            if whole_float(s) {
+                var end = 0;
+                while end < s.len && s[end] != '.' { end++; }
+                let n, ok = parse_int(s[..end]);
+                if ok && n != 0 { return Value.Float { v: n }; }
+            }
             let v, ok = parse_flt(s);
             if !ok { bail(pos, "bad float"); }
             return Value.Float { v: v };
@@ -712,23 +754,20 @@ fn enter_header(doc: Node[>..]&, parent: Node&, key: const u8[:], at: i64) -> No
     }
 }
 
-// A dotted key defines each table before the last segment.
+// A dotted key defines each table before the last segment. It may extend a
+// table it defined itself. A header-defined table stays closed.
 fn enter_dotted(doc: Node[>..]&, parent: Node&, key: const u8[:], at: i64) -> Node& {
     let c = find(parent, key);
-    guard c else { return add(doc, parent, key, Value.Table { count: 0, kind: TableKind.Defined }); }
+    guard c else { return add(doc, parent, key, Value.Table { count: 0, kind: TableKind.Dotted }); }
     match c.val {
         Table t => {
-            if t.kind == TableKind.Inline { bail(at, "inline table"); }
+            if t.kind == TableKind.Inline || t.kind == TableKind.Defined { bail(at, "dotted key"); }
             if t.kind == TableKind.Implicit {
-                c.val = Value.Table { count: t.count, kind: TableKind.Defined };
+                c.val = Value.Table { count: t.count, kind: TableKind.Dotted };
             }
             return c;
         },
-        Array a => {
-            if a.items != Items.Tables { bail(at, "not a table"); }
-            return last_table(c);
-        },
-        _ => { bail(at, "not a table"); },
+        _ => { bail(at, "dotted key"); },
     }
 }
 

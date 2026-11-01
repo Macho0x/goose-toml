@@ -1,5 +1,6 @@
 import toml from "..";
 import toml.parse;
+import toml_test;
 
 fn fail(why: u8[:]) {
     print(why);
@@ -262,6 +263,7 @@ fn self_check() -> bool {
     arrays();
     rejects();
     edges();
+    toml_test::run();
     return true;
 }
 

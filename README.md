@@ -6,7 +6,7 @@
 
 <p align="center">
   TOML for <a href="https://github.com/aardappel/goose">Goose</a><br>
-  <strong>0.1</strong> · <a href="LICENSE">Apache-2.0</a>
+  <strong>0.2</strong> · <a href="LICENSE">Apache-2.0</a>
 </p>
 
 Reads [TOML 1.0](https://toml.io/en/v1.0.0). `parse` fills a tree you own. You then read each field with `child`, `at`, and the `*_of` functions. A bad document comes back as a message.
@@ -36,7 +36,7 @@ Install the Goose compiler, then from this directory:
 goose tests/self_check.goose
 ```
 
-A good run prints `toml ok`.
+A good run prints `toml ok`. That includes the TOML 1.0 fixtures from [toml-test](https://github.com/toml-lang/toml-test), copied under `tests/suite`.
 
 ## Modules
 
