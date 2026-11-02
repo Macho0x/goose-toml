@@ -6,7 +6,7 @@
 
 <p align="center">
   TOML for <a href="https://github.com/aardappel/goose">Goose</a><br>
-  <strong>0.2</strong> · <a href="LICENSE">Apache-2.0</a>
+  <strong>0.2.1</strong> · <a href="LICENSE">Apache-2.0</a>
 </p>
 
 Reads [TOML 1.0](https://toml.io/en/v1.0.0). `parse` fills a tree you own. You then read each field with `child`, `at`, and the `*_of` functions. A bad document comes back as a message.
@@ -49,6 +49,17 @@ A good run prints `toml ok`. That includes the TOML 1.0 fixtures from [toml-test
 Integers are `i64`. A value that does not fit is an error. Floats are IEEE binary64, including the infinities and NaN. A date or time is the source text plus which of the four forms it was: offset, local date-time, local date, or local time.
 
 There is no writer. `PORTING.md` lists what this package leaves out, including serde and the TOML 1.1 inline-table rules.
+
+## Benchmarks
+
+`bench.goose` times this package. The row names stay fixed, so a clang run before a change and a clang run after it compare.
+
+```sh
+goose build -o toml-bench bench.goose --cc clang
+./toml-bench
+```
+
+`goose bench.goose` runs in TinyCC. That is not a timing result. Numbers depend on the machine, so this page does not publish them.
 
 ## License
 
